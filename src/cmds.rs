@@ -79,7 +79,6 @@ pub async fn leave(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<()> {
         .await
         .ok_or_else(|| anyhow!("songbird not registered"))?;
     manager.remove(guild_id).await?;
-    ctx.send(note("left.")).await?;
     Ok(())
 }
 
