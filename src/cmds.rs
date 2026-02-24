@@ -108,7 +108,7 @@ pub async fn play(ctx: PrefixContext<'_, Data, anyhow::Error>, query: Vec<String
         let track = Track::new_with_data(input, Arc::new(TrackInfo::new(song.clone())));
         let call = join_helper(ctx).await?;
         let mut call = call.lock().await;
-        call.enqueue(track).await;
+        let _handle = call.enqueue(track).await; // TODO - now playing event
         call.queue().len()
     };
     ctx.send(embed(
@@ -149,7 +149,7 @@ pub async fn playnext(
         let track = Track::new_with_data(input, Arc::new(TrackInfo::new(song.clone())));
         let call = join_helper(ctx).await?;
         let mut call = call.lock().await;
-        call.enqueue(track).await;
+        let _handle = call.enqueue(track).await; // TODO - now playing event
         call.queue().modify_queue(|q| {
             if q.len() > 1
                 && let Some(last) = q.pop_back()

@@ -64,9 +64,9 @@ pub fn embed(
                     .map(|(i, t)| {
                         let mut s = String::new();
                         if i == 0 {
-                            s.push_str("Now Playing)  ");
+                            s.push_str("`~`) ");
                         } else {
-                            s.push_str(&format!("`{i}`)  "));
+                            s.push_str(&format!("`{i}`) "));
                         }
                         let song = t.data::<TrackInfo>();
                         s.push_str(&song.title);
