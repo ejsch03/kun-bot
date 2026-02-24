@@ -1,2 +1,3 @@
 /target
-whitelist.txt
+*.txt
+*.json

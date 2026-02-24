@@ -1,8 +1,12 @@
 # kun-bot
-A simple Discord bot written purely in *rust* to provide randomly selected images from specified gallery(s).
+An incredibly based Discord bot.
+
+## Features
+- `s.w` responds with a randomly selected image from any provided gallery.
+- `s.play/stop/queue...` music functionality.
 
 ```
-Usage: kun-bot.exe [OPTIONS] <PATHS>... -- <ADMINS>...
+Usage: kun-bot [OPTIONS] <PATHS>... -- <ADMINS>...
 
 Arguments:
   <PATHS>...

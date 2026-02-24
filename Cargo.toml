@@ -1,31 +1,40 @@
 [package]
 name = "kun-bot"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.102"
+async-stream = "0.3.6"
+async-trait = "0.1.89"
+bytemuck = "1.25.0"
+bytes = "1.11.1"
+clap = { version = "4.5.60", features = ["derive"] }
+env_logger = "0.11.9"
+humantime = "2.3.0"
+image = "0.25.9"
+librespot = "0.8.0"
+log = "0.4.29"
+parking_lot = "0.12.5"
+poise = "0.6.1"
+rand = "0.10.0"
+reqwest = "0.13.2"
+rspotify = "0.15.3"
+rustls = { version = "0.23.36", features = ["ring"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+serenity = "0.12.5"
+songbird = { version = "0.5.0", features = ["builtin-queue"] }
+symphonia = "0.5.5"
+tokio = { version = "1.49.0", features = ["rt-multi-thread"] }
+waitx = "0.4.1"
+zerocopy = "0.8.39"
+
+# temp fix
+vergen = "=9.0.6"
+vergen-gitcl = "=1.0.8"
+vergen-lib = "=0.1.6"
 
 [profile.release]
 lto = true
 codegen-units = 1
-
-[dependencies.clap]
-version = "4.5.1"
-default-features = false
-features = ["std", "derive", "help", "color", "usage", "error-context"]
-
-[dependencies.rand]
-version = "0.8.5"
-default-features = false
-
-[dependencies.serenity]
-version = "0.12.0"
-default-features = false
-features = ["client", "gateway", "model", "rustls_backend", "standard_framework"]
-
-[dependencies.tokio]
-version = "1.36.0"
-default-features = false
-features = ["rt-multi-thread"]
-
-[dependencies.image]
-version = "0.24.8"
-default-features = false

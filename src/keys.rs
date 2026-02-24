@@ -1,19 +1,4 @@
-use {
-    crate::{ErrorKind::InvalidPath, Result},
-    image::ImageFormat,
-    rand::{seq::SliceRandom, thread_rng},
-    serenity::{
-        all::{GuildId, MessageId, UserId},
-        builder::{CreateAttachment, CreateEmbed, CreateEmbedFooter, CreateMessage},
-        model::Color,
-        prelude::TypeMapKey,
-    },
-    std::{
-        collections::HashMap,
-        fs::{read_dir, DirEntry},
-        path::{Path, PathBuf},
-    },
-};
+use crate::prelude::*;
 
 pub struct Whitelist {
     data: Vec<GuildId>,
@@ -38,89 +23,28 @@ impl Whitelist {
     }
 }
 
-impl TypeMapKey for Whitelist {
-    type Value = Self;
-}
-
-pub struct Admins;
-
-impl TypeMapKey for Admins {
-    type Value = Vec<UserId>;
-}
-
+#[derive(Default)]
 pub struct MessageLink;
 
 impl TypeMapKey for MessageLink {
-    type Value = HashMap<MessageId, MessageId>;
+    type Value = Arc<Mutex<HashMap<MessageId, MessageId>>>;
 }
 
-pub struct Prefix(String);
+#[derive(Clone, Debug)]
+pub struct TrackInfo {
+    inner: Song,
+}
 
-impl Prefix {
-    pub const fn new(prefix: String) -> Self {
-        Self(prefix)
+impl TrackInfo {
+    pub const fn new(song: Song) -> Self {
+        Self { inner: song }
     }
 }
 
-impl AsRef<str> for Prefix {
-    fn as_ref(&self) -> &str {
-        self.0.as_ref()
+impl std::ops::Deref for TrackInfo {
+    type Target = Song;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
     }
-}
-
-impl TypeMapKey for Prefix {
-    type Value = Self;
-}
-
-pub struct Images;
-
-impl Images {
-    pub async fn get_images(
-        title: &str,
-        paths: Vec<PathBuf>,
-    ) -> Result<<Self as TypeMapKey>::Value> {
-        let mut id = 0;
-
-        let check_de = |de: DirEntry| -> Option<(PathBuf, String)> {
-            let path = de.path();
-            // check if it's an image
-            ImageFormat::from_extension(path.extension()?)?;
-            Some((path.clone(), path.file_name()?.to_str()?.to_string()))
-        };
-
-        let mut images = Vec::new();
-
-        for (p, file_name) in paths
-            .clone()
-            .into_iter()
-            .filter_map(|p| Some(read_dir(p).ok()?.filter_map(Result::ok)))
-            .flatten()
-            .filter_map(check_de)
-        {
-            id += 1; // increment
-
-            let cm = CreateMessage::default()
-                .embed(
-                    CreateEmbed::default()
-                        .title(title)
-                        .attachment(file_name)
-                        .color(Color::from_rgb(0, 0, 0))
-                        .footer(CreateEmbedFooter::new(id.to_string())),
-                )
-                .add_file(CreateAttachment::path(p).await?);
-            images.push(cm)
-        }
-
-        (!images.is_empty())
-            .then_some(images)
-            .ok_or(InvalidPath.into())
-    }
-
-    pub fn choose(images: &<Self as TypeMapKey>::Value) -> Option<&CreateMessage> {
-        images.choose(&mut thread_rng())
-    }
-}
-
-impl TypeMapKey for Images {
-    type Value = Vec<CreateMessage>;
 }

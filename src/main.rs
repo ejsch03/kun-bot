@@ -1,48 +1,26 @@
-mod bot;
+mod app;
 mod cfg;
-mod err;
+mod cmds;
+mod handlers;
 mod keys;
 mod link;
-
-use {
-    bot::{Handler, BOT_GROUP},
-    cfg::parse_config,
-    err::*,
-    keys::*,
-    serenity::{
-        framework::{standard::Configuration, StandardFramework},
-        prelude::GatewayIntents,
-        Client,
-    },
-    std::env::var,
-};
+mod prelude;
+mod stf;
+mod util;
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    let token = var("KUN_BOT_TOKEN")?;
-
-    let (images, prefix, admins, whitelist) = parse_config().await?;
-
-    let intents = GatewayIntents::MESSAGE_CONTENT | GatewayIntents::GUILD_MESSAGES;
-
-    let framework = StandardFramework::new().group(&BOT_GROUP);
-    framework.configure(Configuration::default().prefix(prefix.as_ref()));
-
-    let mut client = Client::builder(token, intents)
-        .framework(framework)
-        .event_handler(Handler)
-        .await?;
-
-    println!("Bot is running with prefix [{}]", prefix.as_ref());
-
-    {
-        let mut data = client.data.write().await;
-
-        data.insert::<Images>(images);
-        data.insert::<Prefix>(prefix);
-        data.insert::<Admins>(admins);
-        data.insert::<Whitelist>(whitelist);
-        data.insert::<MessageLink>(Default::default());
-    }
-    client.start_autosharded().await.map_err(Into::into)
+async fn main() -> prelude::Result<()> {
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Info)
+        .filter_module("kun_bot", log::LevelFilter::Debug)
+        .filter(Some("tracing::span"), log::LevelFilter::Error)
+        .filter(Some("serenity::gateway"), log::LevelFilter::Error)
+        .filter(Some("serenity::http"), log::LevelFilter::Error)
+        .init();
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install rustls crypto provider");
+    let data = prelude::Data::new().await?;
+    let token = std::env::var("KUN_BOT_TOKEN")?;
+    app::run(data, token.trim()).await
 }

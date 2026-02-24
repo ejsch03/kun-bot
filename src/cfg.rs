@@ -1,22 +1,8 @@
-use {
-    crate::{
-        err::Result,
-        keys::{Images, Prefix, Whitelist},
-        link::try_into_guild_id,
-    },
-    clap::Parser,
-    serenity::{
-        builder::CreateMessage,
-        model::prelude::{GuildId, UserId},
-    },
-    std::{fs::File, io::Read, path::PathBuf},
-};
-
-pub const WHITE_CHECK_MARK: char = '\u{2705}';
+use crate::prelude::*;
 
 #[derive(Parser)]
 #[command(author, version, about)]
-struct KunBot {
+pub struct ArgsConfig {
     #[arg(short, long, default_value_t = String::from("s."))]
     prefix: String,
 
@@ -29,39 +15,59 @@ struct KunBot {
     #[arg(required = true, num_args = 1..)]
     paths: Vec<PathBuf>,
 
+    #[arg(short, long)]
+    config_path: Option<PathBuf>,
+
     #[arg(required = true, num_args = 1.., last = true)]
     admins: Vec<UserId>,
 }
 
-pub async fn parse_config() -> Result<(Vec<CreateMessage>, Prefix, Vec<UserId>, Whitelist)> {
-    let KunBot {
-        prefix,
-        title,
-        wl_path,
-        paths,
-        admins,
-    } = KunBot::parse();
+pub struct Data {
+    pub prefix: String,
+    pub admins: Vec<UserId>,
+    pub whitelist: Mutex<Whitelist>,
+    pub images: Vec<CreateMessage>,
+    pub links: Arc<Mutex<HashMap<MessageId, MessageId>>>,
+    pub stf: Spotify,
+}
 
-    let whitelist = {
-        let mut data = Vec::new();
+impl Data {
+    pub async fn new() -> Result<Self> {
+        let args = ArgsConfig::parse();
 
-        if let Ok(mut f) = File::open(&wl_path) {
-            let mut buf = String::new();
-            f.read_to_string(&mut buf)?;
+        let cred = Credentials::new(args.config_path)?;
+        let stf = Spotify::new(cred).await?;
 
-            data.extend(
-                buf.split_ascii_whitespace()
-                    .map(try_into_guild_id)
-                    .collect::<Result<Vec<GuildId>>>()?,
-            );
-        }
-        Whitelist::new(data, wl_path)
-    };
+        let whitelist = {
+            let mut data = Vec::new();
 
-    Ok((
-        Images::get_images(&title, paths).await?,
-        Prefix::new(prefix),
-        admins,
-        whitelist,
-    ))
+            if let Ok(mut f) = File::open(&args.wl_path).await {
+                let mut buf = String::new();
+                f.read_to_string(&mut buf).await?;
+
+                data.extend(
+                    buf.split_ascii_whitespace()
+                        .map(try_into_guild_id)
+                        .collect::<Result<Vec<GuildId>>>()?,
+                );
+            }
+            Whitelist::new(data, args.wl_path)
+        };
+
+        let prefix = args.prefix;
+        let admins = args.admins;
+        let whitelist = Mutex::new(whitelist);
+        let images = get_images(&args.title, args.paths).await?;
+        let links = Default::default();
+
+        let cfg = Self {
+            prefix,
+            admins,
+            whitelist,
+            images,
+            links,
+            stf,
+        };
+        Ok(cfg)
+    }
 }

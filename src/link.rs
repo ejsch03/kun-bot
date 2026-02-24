@@ -1,51 +1,45 @@
-use {
-    super::Result,
-    crate::keys::{MessageLink, Whitelist},
-    serenity::{
-        all::Message,
-        framework::standard::{Args, CommandResult},
-        model::prelude::{ChannelId, GuildId, MessageId},
-        prelude::Context,
-    },
-    std::{fs::File, io::Write},
-};
+use crate::prelude::*;
 
 pub async fn delete_if_linked(
-    ctx: &Context,
+    ctx: &SerenityContext,
     channel_id: ChannelId,
     msg: &MessageId,
-) -> CommandResult {
+) -> Result<()> {
     let link_id = {
         //  delete the message if the message is linked
         let data = ctx.data.read().await;
         let links = data
             .get::<MessageLink>()
-            .ok_or("Message link map hasn't been instantiated")?;
+            .ok_or_else(|| anyhow!("Message link map hasn't been instantiated."))?;
         *links
+            .lock()
+            .await
             .get(msg)
-            .ok_or("Message did not have a link to embed")?
+            .ok_or_else(|| anyhow!("Message did not have a link to embed."))?
     };
     ctx.http.delete_message(channel_id, link_id, None).await?;
     {
         //  remove the message from links if it was able to be deleted
-        let mut data = ctx.data.write().await;
-        let links = data
-            .get_mut::<MessageLink>()
-            .ok_or("Message link map hasn't been instantiated")?;
+        let data = ctx.data.write().await;
+        let mut links = data
+            .get::<MessageLink>()
+            .ok_or_else(|| anyhow!("Message link map hasn't been instantiated."))?
+            .lock()
+            .await;
         links.remove(msg);
         links.remove(&link_id);
     }
     Ok(())
 }
 
-pub async fn link_messages(ctx: &Context, from: MessageId, to: MessageId) -> CommandResult {
-    let mut data = ctx.data.write().await;
-    let links = data
-        .get_mut::<MessageLink>()
-        .ok_or("Message link map hasn't been instantiated")?;
-
-    links.insert(from, to);
-    links.insert(to, from);
+pub async fn link_messages(
+    links: &Mutex<HashMap<MessageId, MessageId>>,
+    from: MessageId,
+    to: MessageId,
+) -> Result<()> {
+    let mut map = links.lock().await;
+    map.insert(from, to);
+    map.insert(to, from);
     Ok(())
 }
 
@@ -53,8 +47,8 @@ pub fn try_into_guild_id(s: &str) -> Result<GuildId> {
     s.parse::<u64>().map(GuildId::from).map_err(Into::into)
 }
 
-pub fn update_wl_file(whitelist: &Whitelist) -> Result<()> {
-    let mut f = File::create(whitelist.path())?;
+pub async fn update_wl_file(whitelist: &Whitelist) -> Result<()> {
+    let mut f = File::create(whitelist.path()).await?;
 
     f.write_all(
         whitelist
@@ -64,25 +58,28 @@ pub fn update_wl_file(whitelist: &Whitelist) -> Result<()> {
             .collect::<Vec<String>>()
             .join(" ")
             .as_bytes(),
-    )?;
-    f.flush().map_err(Into::into)
+    )
+    .await?;
+    f.flush().await.map_err(Into::into)
 }
 
-pub async fn try_whitelist_add(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
+pub async fn try_whitelist_add(
+    whitelist: &Mutex<Whitelist>,
+    msg: &Message,
+    args: &str,
+) -> Result<()> {
     let id = if args.is_empty() {
         msg.guild_id
-            .ok_or("Message not received over the gateway.")?
+            .ok_or_else(|| anyhow!("Message not received over the gateway."))?
     } else {
-        try_into_guild_id(args.message())?
+        try_into_guild_id(args)?
     };
 
-    let mut data = ctx.data.write().await;
-    let whitelist = data.get_mut::<Whitelist>().ok_or("Whitelist is not set")?;
-
+    let mut whitelist = whitelist.lock().await;
     if whitelist.data().contains(&id) {
-        Err("Server is already whitelisted".into())
+        bail!("Server is already whitelisted")
     } else {
         whitelist.data_mut().push(id);
-        update_wl_file(whitelist).map_err(|e| e.to_string().into())
+        update_wl_file(&whitelist).await
     }
 }
