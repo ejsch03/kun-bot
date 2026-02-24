@@ -128,10 +128,13 @@ pub async fn join_helper(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<
         && let Some(joined) = { call.lock().await.current_channel() }
         && channel_id.get() == joined.0.get()
     {
+        call.lock().await.deafen(true).await?;
         return Ok(call);
     }
     let manager = songbird::get(ctx.serenity_context())
         .await
         .ok_or_else(|| anyhow!("songbird not registered"))?;
-    manager.join(guild_id, channel_id).await.map_err(Into::into)
+    let call = manager.join(guild_id, channel_id).await?;
+    call.lock().await.deafen(true).await?;
+    Ok(call)
 }
