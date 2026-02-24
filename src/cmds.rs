@@ -53,11 +53,14 @@ pub async fn w(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<()> {
 
 #[poise::command(prefix_command, guild_only, aliases("j", "hop-in"))]
 pub async fn join(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<()> {
-    if ctx
-        .guild_id()
-        .ok_or_else(|| anyhow!("allowed in guilds only."))?
-        == GuildId::new(684429201398562855)
-    {
+    if ![
+        GuildId::new(684429201398562855),
+        GuildId::new(1090358332440711209),
+    ]
+    .contains(
+        &ctx.guild_id()
+            .ok_or_else(|| anyhow!("allowed in guilds only."))?,
+    ) {
         bail!("this guild isn't whitelisted.")
     }
 
@@ -82,11 +85,14 @@ pub async fn leave(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<()> {
 
 #[poise::command(prefix_command, guild_only, aliases("piss"))]
 pub async fn play(ctx: PrefixContext<'_, Data, anyhow::Error>, query: Vec<String>) -> Result<()> {
-    if ctx
-        .guild_id()
-        .ok_or_else(|| anyhow!("allowed in guilds only."))?
-        == GuildId::new(684429201398562855)
-    {
+    if ![
+        GuildId::new(684429201398562855),
+        GuildId::new(1090358332440711209),
+    ]
+    .contains(
+        &ctx.guild_id()
+            .ok_or_else(|| anyhow!("allowed in guilds only."))?,
+    ) {
         bail!("this guild isn't whitelisted.")
     }
 
@@ -120,11 +126,14 @@ pub async fn playnext(
     ctx: PrefixContext<'_, Data, anyhow::Error>,
     query: Vec<String>,
 ) -> Result<()> {
-    if ctx
-        .guild_id()
-        .ok_or_else(|| anyhow!("allowed in guilds only."))?
-        == GuildId::new(684429201398562855)
-    {
+    if ![
+        GuildId::new(684429201398562855),
+        GuildId::new(1090358332440711209),
+    ]
+    .contains(
+        &ctx.guild_id()
+            .ok_or_else(|| anyhow!("allowed in guilds only."))?,
+    ) {
         bail!("this guild isn't whitelisted.")
     }
 
