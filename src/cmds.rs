@@ -1,7 +1,7 @@
 use crate::prelude::*;
 
 #[poise::command(prefix_command)]
-pub async fn a(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<()> {
+pub async fn a(ctx: Context<'_>) -> Result<()> {
     let msg = ctx.msg;
     let args = ctx.args;
 
@@ -22,7 +22,7 @@ pub async fn a(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<()> {
 }
 
 #[poise::command(prefix_command)]
-pub async fn w(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<()> {
+pub async fn w(ctx: Context<'_>) -> Result<()> {
     let msg = ctx.msg;
     let args = ctx.args;
 
@@ -52,24 +52,14 @@ pub async fn w(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<()> {
 }
 
 #[poise::command(prefix_command, guild_only, aliases("j", "hop-in"))]
-pub async fn join(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<()> {
-    if ![
-        GuildId::new(684429201398562855),
-        GuildId::new(1090358332440711209),
-    ]
-    .contains(
-        &ctx.guild_id()
-            .ok_or_else(|| anyhow!("allowed in guilds only."))?,
-    ) {
-        bail!("this guild isn't whitelisted.")
-    }
-
+pub async fn join(ctx: Context<'_>) -> Result<()> {
+    _whitelist(ctx)?;
     join_helper(ctx).await?;
     Ok(())
 }
 
 #[poise::command(prefix_command, guild_only, aliases("quit", "dip"))]
-pub async fn leave(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<()> {
+pub async fn leave(ctx: Context<'_>) -> Result<()> {
     {
         let call = get_call(ctx).await?;
         call.lock().await.queue().stop();
@@ -83,92 +73,17 @@ pub async fn leave(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<()> {
 }
 
 #[poise::command(prefix_command, guild_only, aliases("piss"))]
-pub async fn play(ctx: PrefixContext<'_, Data, anyhow::Error>, query: Vec<String>) -> Result<()> {
-    if ![
-        GuildId::new(684429201398562855),
-        GuildId::new(1090358332440711209),
-    ]
-    .contains(
-        &ctx.guild_id()
-            .ok_or_else(|| anyhow!("allowed in guilds only."))?,
-    ) {
-        bail!("this guild isn't whitelisted.")
-    }
-
-    let query = query
-        .into_iter()
-        .map(|s| s.trim().to_string())
-        .collect::<Vec<String>>()
-        .join(" ");
-
-    let song = ctx.data.stf.search(&query).await?;
-    let input = ctx.data().stf.stream(song.uri.clone()).await?;
-    let len = {
-        let track = Track::new_with_data(input, Arc::new(TrackInfo::new(song.clone())));
-        let call = join_helper(ctx).await?;
-        let mut call = call.lock().await;
-        let _handle = call.enqueue(track).await; // TODO - now playing event
-        call.queue().len()
-    };
-    ctx.send(embed(
-        "Added to Queue.",
-        Some(EmbedMessage::Song(Box::new(song))),
-        Some(len),
-    ))
-    .await?;
-
-    Ok(())
+pub async fn play(ctx: Context<'_>, query: Vec<String>) -> Result<()> {
+    play_helper(ctx, query, false).await
 }
 
 #[poise::command(prefix_command, guild_only, aliases("playtop"))]
-pub async fn playnext(
-    ctx: PrefixContext<'_, Data, anyhow::Error>,
-    query: Vec<String>,
-) -> Result<()> {
-    if ![
-        GuildId::new(684429201398562855),
-        GuildId::new(1090358332440711209),
-    ]
-    .contains(
-        &ctx.guild_id()
-            .ok_or_else(|| anyhow!("allowed in guilds only."))?,
-    ) {
-        bail!("this guild isn't whitelisted.")
-    }
-
-    let query = query
-        .into_iter()
-        .map(|s| s.trim().to_string())
-        .collect::<Vec<String>>()
-        .join(" ");
-
-    let song = ctx.data.stf.search(&query).await?;
-    let input = ctx.data().stf.stream(song.uri.clone()).await?;
-    let len = {
-        let track = Track::new_with_data(input, Arc::new(TrackInfo::new(song.clone())));
-        let call = join_helper(ctx).await?;
-        let mut call = call.lock().await;
-        let _handle = call.enqueue(track).await; // TODO - now playing event
-        call.queue().modify_queue(|q| {
-            if q.len() > 1
-                && let Some(last) = q.pop_back()
-            {
-                q.insert(1, last);
-            }
-        });
-        call.queue().len()
-    };
-    ctx.send(embed(
-        "Playing next.",
-        Some(EmbedMessage::Song(Box::new(song))),
-        Some(len),
-    ))
-    .await?;
-    Ok(())
+pub async fn playnext(ctx: Context<'_>, query: Vec<String>) -> Result<()> {
+    play_helper(ctx, query, true).await
 }
 
 #[poise::command(prefix_command, guild_only, aliases("nah"))]
-pub async fn skip(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<()> {
+pub async fn skip(ctx: Context<'_>) -> Result<()> {
     let call = get_call(ctx).await?;
     let call = call.lock().await;
     let queue = call.queue();
@@ -177,55 +92,56 @@ pub async fn skip(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<()> {
         let new_len = queue.len().saturating_sub(1);
         queue.skip()?;
         ctx.send(embed(
+            ctx,
             format!("Skipped: {}", track.data::<TrackInfo>().title),
             None,
             Some(new_len),
         ))
         .await?;
     } else {
-        ctx.send(note("Nothing is playing.")).await?;
+        ctx.send(note(ctx, "Nothing is playing.")).await?;
     }
     Ok(())
 }
 
 #[poise::command(prefix_command, guild_only, aliases("stop"))]
-pub async fn pause(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<()> {
+pub async fn pause(ctx: Context<'_>) -> Result<()> {
     let call = get_call(ctx).await?;
     let call = call.lock().await;
     let queue = call.queue();
 
     if queue.is_empty() {
-        ctx.send(note("Nothing is playing.")).await?;
+        ctx.send(note(ctx, "Nothing is playing.")).await?;
     } else {
         queue.pause()?;
-        ctx.send(note("Paused.")).await?;
+        ctx.send(note(ctx, "Paused.")).await?;
     }
     Ok(())
 }
 
 #[poise::command(prefix_command, guild_only, aliases("continue"))]
-pub async fn resume(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<()> {
+pub async fn resume(ctx: Context<'_>) -> Result<()> {
     let call = get_call(ctx).await?;
     let call = call.lock().await;
     let queue = call.queue();
 
     if queue.is_empty() {
-        ctx.send(note("Nothing is playing.")).await?;
+        ctx.send(note(ctx, "Nothing is playing.")).await?;
     } else {
         queue.resume()?;
-        ctx.send(note("Resumed.")).await?;
+        ctx.send(note(ctx, "Resumed.")).await?;
     }
     Ok(())
 }
 
 #[poise::command(prefix_command, guild_only, aliases("clean"))]
-pub async fn clear(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<()> {
+pub async fn clear(ctx: Context<'_>) -> Result<()> {
     let call = get_call(ctx).await?;
     let call = call.lock().await;
     let queue = call.queue();
 
     if queue.is_empty() {
-        ctx.send(note("There is no queue.")).await?;
+        ctx.send(note(ctx, "There is no queue.")).await?;
         return Ok(());
     }
 
@@ -245,17 +161,18 @@ pub async fn clear(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<()> {
             q.clear();
         }
     });
-    ctx.send(note("Queue has been cleared.")).await?;
+    ctx.send(note(ctx, "Queue has been cleared.")).await?;
     Ok(())
 }
 
 #[poise::command(prefix_command, guild_only, aliases("q"))]
-pub async fn queue(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<()> {
+pub async fn queue(ctx: Context<'_>) -> Result<()> {
     let call = get_call(ctx).await?;
     let call = call.lock().await;
     let queue = call.queue();
 
     ctx.send(embed(
+        ctx,
         "The Queue.",
         Some(EmbedMessage::Queue(queue.current_queue())),
         Some(queue.len()),
@@ -266,10 +183,7 @@ pub async fn queue(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<()> {
 }
 
 #[poise::command(prefix_command, guild_only, aliases("rm"))]
-pub async fn remove(
-    ctx: PrefixContext<'_, Data, anyhow::Error>,
-    track_index: Option<usize>,
-) -> Result<()> {
+pub async fn remove(ctx: Context<'_>, track_index: Option<usize>) -> Result<()> {
     let call = get_call(ctx).await?;
     let call = call.lock().await;
     let queue = call.queue();
@@ -280,19 +194,23 @@ pub async fn remove(
                 let new_len = queue.len().saturating_sub(1);
                 queue.skip()?;
                 ctx.send(embed(
+                    ctx,
                     format!("Skipped: {}", track.data::<TrackInfo>().title),
                     None,
                     Some(new_len),
                 ))
                 .await?;
             } else if let Some(t) = queue.dequeue(index) {
-                ctx.send(note(&format!("Removed: {}", t.data::<TrackInfo>().title)))
-                    .await?;
+                ctx.send(note(
+                    ctx,
+                    &format!("Removed: {}", t.data::<TrackInfo>().title),
+                ))
+                .await?;
             } else {
                 bail!("No track at that position.")
             }
         } else {
-            ctx.send(note("Nothing is playing.")).await?;
+            ctx.send(note(ctx, "Nothing is playing.")).await?;
         }
     } else {
         bail!("Please provide the track position.")

@@ -31,18 +31,20 @@ pub struct Song {
     #[serde(skip)]
     pub uri: SpotifyUri,
     #[serde(skip)]
-    pub url: String,
+    pub track_url: String,
+    #[serde(skip)]
+    pub cover_url: Option<String>,
 }
 
 impl Song {
-    pub fn from_spotify(t: &FullTrack) -> Result<Self> {
+    pub async fn from_spotify(t: &FullTrack, cover_url: Option<String>) -> Result<Self> {
         let track_id =
             t.id.as_ref()
                 .ok_or_else(|| anyhow!("track doesn't have an ID."))?;
         let id = track_id.id().to_string();
         let dur = t.duration.to_std()?.as_secs();
         let uri = SpotifyUri::from_uri(&track_id.uri())?;
-        let url = track_id.url();
+        let track_url = track_id.url();
 
         Ok(Self {
             id,
@@ -67,7 +69,8 @@ impl Song {
             created: t.album.release_date.clone(),
             explicit_status: if t.explicit { Some("explicit") } else { None },
             uri,
-            url,
+            track_url,
+            cover_url,
         })
     }
 }

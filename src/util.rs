@@ -44,6 +44,7 @@ pub enum EmbedMessage {
 }
 
 pub fn embed(
+    ctx: Context<'_>,
     author: impl AsRef<str>,
     song: Option<EmbedMessage>,
     queue_length: Option<usize>,
@@ -52,7 +53,24 @@ pub fn embed(
 
     // author
     let embed = embed
-        .author(CreateEmbedAuthor::new(author.as_ref()))
+        .author({
+            let embed = CreateEmbedAuthor::new(author.as_ref());
+
+            // this is just bro
+            if let Some(url) = song.as_ref().and_then(|s| {
+                if let EmbedMessage::Song(s) = s {
+                    s.cover_url.clone()
+                } else {
+                    None
+                }
+            }) {
+                embed.icon_url(url)
+            } else if let Some(url) = ctx.guild().and_then(|g| g.icon_url()) {
+                embed.icon_url(url)
+            } else {
+                embed
+            }
+        })
         .color(Colour::BLURPLE);
 
     // title
@@ -71,7 +89,7 @@ pub fn embed(
                         let song = t.data::<TrackInfo>();
                         s.push_str(&song.title);
                         if let Some(artist) = song.artist.as_ref() {
-                            s.push_str(&format!(" ◦ {artist}"));
+                            s.push_str(&format!("\u{00A0}\u{00A0}◦\u{00A0}\u{00A0}{artist}"));
                         }
                         s
                     })
@@ -80,8 +98,14 @@ pub fn embed(
             ),
             EmbedMessage::Song(song) => {
                 let dur = Duration::from_secs(song.duration);
-                let title = format!("{} - [{}]", song.title, humantime::format_duration(dur));
-                embed.title(title).url(song.url)
+
+                let mut s = song.title.clone();
+                if let Some(artist) = song.artist.as_ref() {
+                    s.push_str(&format!("\u{00A0}\u{00A0}◦\u{00A0}\u{00A0}{artist}"));
+                }
+                let dur = format!(" ・ [{}]", humantime::format_duration(dur));
+                s.push_str(&dur);
+                embed.title(s).url(song.track_url)
             }
         }
     } else {
@@ -94,15 +118,14 @@ pub fn embed(
     } else {
         embed
     };
-
     CreateReply::default().embed(embed).reply(true)
 }
 
-pub fn note(msg: &str) -> CreateReply {
-    embed(msg, None, None)
+pub fn note(ctx: Context<'_>, msg: &str) -> CreateReply {
+    embed(ctx, msg, None, None)
 }
 
-pub async fn get_loc(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<(GuildId, ChannelId)> {
+pub async fn get_loc(ctx: Context<'_>) -> Result<(GuildId, ChannelId)> {
     let guild = ctx.guild().ok_or_else(|| anyhow!("not from a guild."))?;
     let channel_id = guild
         .voice_states
@@ -112,7 +135,7 @@ pub async fn get_loc(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<(Gui
     Ok((guild.id, channel_id))
 }
 
-pub async fn get_call(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<Arc<Mutex<Call>>> {
+pub async fn get_call(ctx: Context<'_>) -> Result<Arc<Mutex<Call>>> {
     let (guild_id, ..) = get_loc(ctx).await?;
     let manager = songbird::get(ctx.serenity_context())
         .await
@@ -122,7 +145,7 @@ pub async fn get_call(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<Arc
         .ok_or_else(|| anyhow!("not in a voice channel"))
 }
 
-pub async fn join_helper(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<Arc<Mutex<Call>>> {
+pub async fn join_helper(ctx: Context<'_>) -> Result<Arc<Mutex<Call>>> {
     let (guild_id, channel_id) = get_loc(ctx).await?;
     if let Ok(call) = get_call(ctx).await
         && let Some(joined) = { call.lock().await.current_channel() }
@@ -137,4 +160,63 @@ pub async fn join_helper(ctx: PrefixContext<'_, Data, anyhow::Error>) -> Result<
     let call = manager.join(guild_id, channel_id).await?;
     call.lock().await.deafen(true).await?;
     Ok(call)
+}
+
+pub async fn play_helper(ctx: Context<'_>, query: Vec<String>, is_next: bool) -> Result<()> {
+    _whitelist(ctx)?;
+
+    let query = query
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .collect::<Vec<String>>()
+        .join(" ");
+
+    let song = ctx.data.stf.search(&query).await?;
+    let input = ctx.data().stf.stream(song.uri.clone()).await?;
+    let len = {
+        let track = Track::new_with_data(input, Arc::new(TrackInfo::new(song.clone())));
+        let call = join_helper(ctx).await?;
+        let mut call = call.lock().await;
+        let new_len = call.queue().len() + 1;
+        let _handle = call.enqueue(track).await; // TODO - now playing event
+        if is_next {
+            call.queue().modify_queue(|q| {
+                if q.len() > 1
+                    && let Some(last) = q.pop_back()
+                {
+                    q.insert(1, last);
+                }
+            });
+        }
+        new_len
+    };
+    ctx.send(embed(
+        ctx,
+        if is_next {
+            "Playing next."
+        } else {
+            "Added to Queue."
+        },
+        Some(EmbedMessage::Song(Box::new(song))),
+        Some(len),
+    ))
+    .await?;
+
+    Ok(())
+}
+
+// TODO - this is temp
+pub fn _whitelist(ctx: Context<'_>) -> Result<()> {
+    if [
+        GuildId::new(684429201398562855),
+        GuildId::new(1090358332440711209),
+    ]
+    .contains(
+        &ctx.guild_id()
+            .ok_or_else(|| anyhow!("allowed in guilds only."))?,
+    ) {
+        Ok(())
+    } else {
+        bail!("this guild isn't allowed to use music features... yet.")
+    }
 }

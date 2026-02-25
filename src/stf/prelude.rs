@@ -25,9 +25,7 @@ pub use rspotify::prelude::BaseClient;
 pub use songbird::input::{Input, LiveInput};
 
 // misc
-pub use bytes::Bytes;
 pub use parking_lot::Mutex;
-pub use reqwest::Client as HttpClient;
 pub use serde::Serialize;
 pub use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 pub use zerocopy::IntoBytes;

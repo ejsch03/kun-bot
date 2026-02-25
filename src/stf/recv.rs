@@ -26,9 +26,9 @@ impl Read for PcmStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.rx.update_thread(); // TODO
 
-        log::debug!("Waiting...");
+        // log::debug!("Waiting...");
         self.rx.wait();
-        log::debug!("Reading!");
+        // log::debug!("Reading!");
         self.buf.lock().read(buf)
     }
 }

@@ -5,7 +5,7 @@ use symphonia::core::{codecs::DecoderOptions, formats::FormatOptions, io::MediaS
 use super::prelude::*;
 
 struct LibreSpotify {
-    cred: Credentials,
+    // cred: Credentials,
     sess: AsyncMutex<Session>,
 }
 
@@ -28,11 +28,10 @@ impl LibreSpotify {
 }
 
 pub struct Spotify {
-    rspot: RSpotify,                                 // spotify dev api
-    lspot: LibreSpotify,                             // librespot config
-    http: HttpClient,                                // reqwests client
-    song_cache: AsyncMutex<HashMap<String, Song>>,   // song metadata cache
-    cover_cache: AsyncMutex<HashMap<String, Bytes>>, // cover-art metadata cache
+    rspot: RSpotify,                                            // spotify dev api
+    lspot: LibreSpotify,                                        // librespot config
+    song_cache: AsyncMutex<HashMap<String, Song>>,              // song metadata cache
+    cover_cache: AsyncMutex<HashMap<AlbumId<'static>, String>>, // cover-art metadata cache
 }
 
 impl Spotify {
@@ -43,46 +42,47 @@ impl Spotify {
 
         let sess = AsyncMutex::new(super::auth::create_session().await?);
 
-        let lspot = LibreSpotify { cred, sess };
+        let lspot = LibreSpotify { sess };
 
         let app_state = Self {
             rspot,
             lspot,
-            http: Default::default(),
             song_cache: Default::default(),
             cover_cache: Default::default(),
         };
         Ok(app_state)
     }
 
-    pub async fn get_cover_art(&self, id: String) -> Result<Bytes> {
-        let image_bytes = if let Some(bytes) = self.cover_cache.lock().await.get(&id) {
-            bytes.clone()
+    // TODO
+    pub async fn get_cover_url(&self, id: AlbumId<'static>) -> Result<String> {
+        let url = if let Some(url) = self.cover_cache.lock().await.get(&id) {
+            url.clone()
         } else {
-            let album_id = AlbumId::from_id(&id)?;
-
-            let album = self.rspot.album(album_id, None).await?;
+            let album = self.rspot.album(id.clone(), None).await?;
 
             // spotify returns images sorted largest first
-            let image_url = album
+            let url = album
                 .images
                 .first()
-                .ok_or_else(|| anyhow!("no available album cover."))?;
+                .ok_or_else(|| anyhow!("no available album cover."))?
+                .url
+                .clone();
 
-            let bytes = self.http.get(&image_url.url).send().await?.bytes().await?;
+            let mut cache = self.cover_cache.lock().await;
+            cache.insert(id.clone(), url.clone());
 
-            self.cover_cache
-                .lock()
-                .await
-                .insert(id.clone(), bytes.clone());
-
-            bytes
+            url
         };
-        Ok(image_bytes)
+        Ok(url)
     }
 
     async fn parse_track(&self, track: &FullTrack) -> Result<Song> {
-        let song = Song::from_spotify(track)?;
+        let cover_url = if let Some(id) = track.album.id.as_ref() {
+            self.get_cover_url(id.clone()).await.ok()
+        } else {
+            None
+        };
+        let song = Song::from_spotify(track, cover_url).await?;
         self.song_cache
             .lock()
             .await

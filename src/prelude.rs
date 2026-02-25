@@ -17,7 +17,8 @@ pub use serenity::all::{
 pub use serenity::prelude::TypeMapKey;
 
 // poise
-pub use poise::{CreateReply, Framework, FrameworkOptions, PrefixContext, PrefixFrameworkOptions};
+pub use poise::{CreateReply, Framework, FrameworkOptions, PrefixFrameworkOptions};
+pub type Context<'a> = poise::PrefixContext<'a, Data, anyhow::Error>;
 
 // songbird
 pub use songbird::Call;

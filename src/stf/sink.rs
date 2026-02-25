@@ -49,10 +49,10 @@ impl Sink for StreamingSink {
             },
             AudioPacket::Raw(bytes) => bytes,
         };
-        let n = bytes.len();
+        // let n = bytes.len();
         self.buf.lock().extend(bytes);
         self.tx.signal();
-        log::debug!("SIGNAL: {}", n);
+        // log::debug!("SIGNAL: {}", n);
         Ok(())
     }
 }
