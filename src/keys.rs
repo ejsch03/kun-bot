@@ -39,6 +39,10 @@ impl TrackInfo {
     pub const fn new(song: Song) -> Self {
         Self { inner: song }
     }
+
+    pub fn into_inner(self) -> Song {
+        self.inner
+    }
 }
 
 impl std::ops::Deref for TrackInfo {

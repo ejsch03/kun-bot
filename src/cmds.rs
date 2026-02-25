@@ -91,15 +91,17 @@ pub async fn skip(ctx: Context<'_>) -> Result<()> {
     if let Some(track) = queue.current() {
         let new_len = queue.len().saturating_sub(1);
         queue.skip()?;
+        let song = track.data::<TrackInfo>().as_ref().clone().into_inner();
         ctx.send(embed(
             ctx,
-            format!("Skipped: {}", track.data::<TrackInfo>().title),
-            None,
+            format!("Skipped: {}", song.title),
+            Some(EmbedMessage::Song(Box::new(song))),
             Some(new_len),
+            true,
         ))
         .await?;
     } else {
-        ctx.send(note(ctx, "Nothing is playing.")).await?;
+        ctx.send(note(ctx, None, "Nothing is playing.")).await?;
     }
     Ok(())
 }
@@ -111,10 +113,10 @@ pub async fn pause(ctx: Context<'_>) -> Result<()> {
     let queue = call.queue();
 
     if queue.is_empty() {
-        ctx.send(note(ctx, "Nothing is playing.")).await?;
+        ctx.send(note(ctx, None, "Nothing is playing.")).await?;
     } else {
         queue.pause()?;
-        ctx.send(note(ctx, "Paused.")).await?;
+        ctx.send(note(ctx, None, "Paused.")).await?;
     }
     Ok(())
 }
@@ -126,10 +128,10 @@ pub async fn resume(ctx: Context<'_>) -> Result<()> {
     let queue = call.queue();
 
     if queue.is_empty() {
-        ctx.send(note(ctx, "Nothing is playing.")).await?;
+        ctx.send(note(ctx, None, "Nothing is playing.")).await?;
     } else {
         queue.resume()?;
-        ctx.send(note(ctx, "Resumed.")).await?;
+        ctx.send(note(ctx, None, "Resumed.")).await?;
     }
     Ok(())
 }
@@ -141,7 +143,7 @@ pub async fn clear(ctx: Context<'_>) -> Result<()> {
     let queue = call.queue();
 
     if queue.is_empty() {
-        ctx.send(note(ctx, "There is no queue.")).await?;
+        ctx.send(note(ctx, None, "There is no queue.")).await?;
         return Ok(());
     }
 
@@ -161,7 +163,7 @@ pub async fn clear(ctx: Context<'_>) -> Result<()> {
             q.clear();
         }
     });
-    ctx.send(note(ctx, "Queue has been cleared.")).await?;
+    ctx.send(note(ctx, None, "Queue has been cleared.")).await?;
     Ok(())
 }
 
@@ -176,12 +178,14 @@ pub async fn queue(ctx: Context<'_>) -> Result<()> {
         "The Queue.",
         Some(EmbedMessage::Queue(queue.current_queue())),
         Some(queue.len()),
+        true,
     ))
     .await?;
 
     Ok(())
 }
 
+// wow just wow
 #[poise::command(prefix_command, guild_only, aliases("rm"))]
 pub async fn remove(ctx: Context<'_>, track_index: Option<usize>) -> Result<()> {
     let call = get_call(ctx).await?;
@@ -193,24 +197,25 @@ pub async fn remove(ctx: Context<'_>, track_index: Option<usize>) -> Result<()> 
             if index == 0 {
                 let new_len = queue.len().saturating_sub(1);
                 queue.skip()?;
+                let song = track.data::<TrackInfo>().as_ref().clone().into_inner();
                 ctx.send(embed(
                     ctx,
-                    format!("Skipped: {}", track.data::<TrackInfo>().title),
-                    None,
+                    format!("Skipped: {}", song.title),
+                    Some(EmbedMessage::Song(Box::new(song))),
                     Some(new_len),
+                    true,
                 ))
                 .await?;
             } else if let Some(t) = queue.dequeue(index) {
-                ctx.send(note(
-                    ctx,
-                    &format!("Removed: {}", t.data::<TrackInfo>().title),
-                ))
-                .await?;
+                let song = t.data::<TrackInfo>().as_ref().clone().into_inner();
+                let msg = format!("Removed: {}", song.title);
+                ctx.send(note(ctx, Some(EmbedMessage::Song(Box::new(song))), &msg))
+                    .await?;
             } else {
                 bail!("No track at that position.")
             }
         } else {
-            ctx.send(note(ctx, "Nothing is playing.")).await?;
+            ctx.send(note(ctx, None, "Nothing is playing.")).await?;
         }
     } else {
         bail!("Please provide the track position.")

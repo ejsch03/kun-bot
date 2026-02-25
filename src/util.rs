@@ -48,6 +48,7 @@ pub fn embed(
     author: impl AsRef<str>,
     song: Option<EmbedMessage>,
     queue_length: Option<usize>,
+    brief: bool,
 ) -> CreateReply {
     let embed = CreateEmbed::new();
 
@@ -97,15 +98,19 @@ pub fn embed(
                     .join("\n"),
             ),
             EmbedMessage::Song(song) => {
-                let dur = Duration::from_secs(song.duration);
+                if !brief {
+                    let dur = Duration::from_secs(song.duration);
 
-                let mut s = song.title.clone();
-                if let Some(artist) = song.artist.as_ref() {
-                    s.push_str(&format!("\u{00A0}\u{00A0}◦\u{00A0}\u{00A0}{artist}"));
+                    let mut s = song.title.clone();
+                    if let Some(artist) = song.artist.as_ref() {
+                        s.push_str(&format!("\u{00A0}\u{00A0}◦\u{00A0}\u{00A0}{artist}"));
+                    }
+                    let dur = format!(" ・ [{}]", humantime::format_duration(dur));
+                    s.push_str(&dur);
+                    embed.title(s).url(song.track_url)
+                } else {
+                    embed
                 }
-                let dur = format!(" ・ [{}]", humantime::format_duration(dur));
-                s.push_str(&dur);
-                embed.title(s).url(song.track_url)
             }
         }
     } else {
@@ -121,8 +126,8 @@ pub fn embed(
     CreateReply::default().embed(embed).reply(true)
 }
 
-pub fn note(ctx: Context<'_>, msg: &str) -> CreateReply {
-    embed(ctx, msg, None, None)
+pub fn note(ctx: Context<'_>, song: Option<EmbedMessage>, msg: &str) -> CreateReply {
+    embed(ctx, msg, song, None, true)
 }
 
 pub async fn get_loc(ctx: Context<'_>) -> Result<(GuildId, ChannelId)> {
@@ -163,6 +168,7 @@ pub async fn join_helper(ctx: Context<'_>) -> Result<Arc<Mutex<Call>>> {
 }
 
 pub async fn play_helper(ctx: Context<'_>, query: Vec<String>, is_next: bool) -> Result<()> {
+    ctx.channel_id().broadcast_typing(ctx.http()).await?;
     _whitelist(ctx)?;
 
     let query = query
@@ -199,6 +205,7 @@ pub async fn play_helper(ctx: Context<'_>, query: Vec<String>, is_next: bool) ->
         },
         Some(EmbedMessage::Song(Box::new(song))),
         Some(len),
+        false,
     ))
     .await?;
 
