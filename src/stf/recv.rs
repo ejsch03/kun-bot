@@ -1,21 +1,15 @@
-use std::io::{self, Read, Seek};
-
-use songbird::input::core::io::MediaSource;
-use waitx::Waiter;
-
-// use super::opus::*;
 use super::prelude::*;
 
 pub struct PcmStream {
-    buf: Arc<Mutex<VecDeque<u8>>>,
+    buf: HeapCons<u8>,
     rx: Waiter,
     _player: Arc<Player>,
 }
 
 impl PcmStream {
-    pub fn new(buf: Arc<Mutex<VecDeque<u8>>>, rx: Waiter, player: Arc<Player>) -> Self {
+    pub fn new(buf: HeapCons<u8>, rx: Waiter, player: Arc<Player>) -> Self {
         Self {
-            buf,
+            buf: buf,
             rx,
             _player: player,
         }
@@ -24,12 +18,8 @@ impl PcmStream {
 
 impl Read for PcmStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.rx.update_thread(); // TODO
-
-        // log::debug!("Waiting...");
         self.rx.wait();
-        // log::debug!("Reading!");
-        self.buf.lock().read(buf)
+        self.buf.read(buf)
     }
 }
 
@@ -51,3 +41,6 @@ impl MediaSource for PcmStream {
         false
     }
 }
+
+// TODO - doc safety
+unsafe impl Sync for PcmStream {}

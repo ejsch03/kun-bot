@@ -1,37 +1,35 @@
-use rspotify::model::TrackId;
-use songbird::input::{Parsed, core::probe::Hint};
-use symphonia::core::{codecs::DecoderOptions, formats::FormatOptions, io::MediaSourceStream};
-
 use super::prelude::*;
 
 struct LibreSpotify {
-    // cred: Credentials,
-    sess: AsyncMutex<Session>,
+    sess: Mutex<Session>,
 }
 
 impl LibreSpotify {
     pub async fn session(&self) -> Result<Session> {
-        let sess = self.sess.lock().await;
+        let mut sess = self.sess.lock().await;
         if sess.is_invalid() {
-            Self::refresh_session(&sess).await?;
+            *sess = Self::create_session().await?;
         }
         Ok(sess.clone())
     }
 
-    async fn refresh_session(sess: &AsyncMutexGuard<'_, Session>) -> Result<()> {
+    async fn create_session() -> Result<Session> {
         let creds = Cache::new(Some("."), None, None, None)?
             .credentials()
             .ok_or(anyhow!("No cached credentials"))?;
-        sess.connect(creds, true).await?;
-        Ok(())
+
+        let session_config = SessionConfig::default();
+        let session = Session::new(session_config, None);
+        session.connect(creds, true).await?;
+        Ok(session)
     }
 }
 
 pub struct Spotify {
-    rspot: RSpotify,                                            // spotify dev api
-    lspot: LibreSpotify,                                        // librespot config
-    song_cache: AsyncMutex<HashMap<String, Song>>,              // song metadata cache
-    cover_cache: AsyncMutex<HashMap<AlbumId<'static>, String>>, // cover-art metadata cache
+    rspot: RSpotify,                                       // spotify dev api
+    lspot: LibreSpotify,                                   // librespot config
+    song_cache: Mutex<HashMap<String, Song>>,              // song metadata cache
+    cover_cache: Mutex<HashMap<AlbumId<'static>, String>>, // cover-art metadata cache
 }
 
 impl Spotify {
@@ -40,7 +38,7 @@ impl Spotify {
         let rspot = RSpotify::new(rspot_cred);
         rspot.request_token().await?;
 
-        let sess = AsyncMutex::new(super::auth::create_session().await?);
+        let sess = Mutex::new(super::auth::create_session().await?);
 
         let lspot = LibreSpotify { sess };
 
@@ -53,7 +51,6 @@ impl Spotify {
         Ok(app_state)
     }
 
-    // TODO
     pub async fn get_cover_url(&self, id: AlbumId<'static>) -> Result<String> {
         let url = if let Some(url) = self.cover_cache.lock().await.get(&id) {
             url.clone()
@@ -74,20 +71,6 @@ impl Spotify {
             url
         };
         Ok(url)
-    }
-
-    async fn parse_track(&self, track: &FullTrack) -> Result<Song> {
-        let cover_url = if let Some(id) = track.album.id.as_ref() {
-            self.get_cover_url(id.clone()).await.ok()
-        } else {
-            None
-        };
-        let song = Song::from_spotify(track, cover_url).await?;
-        self.song_cache
-            .lock()
-            .await
-            .insert(song.id.clone(), song.clone());
-        Ok(song)
     }
 
     pub async fn search(&self, query: &str) -> Result<Song> {
@@ -132,19 +115,21 @@ impl Spotify {
 
     pub async fn stream(&self, uri: SpotifyUri) -> Result<Input> {
         let sess = self.lspot.session().await?;
-        let buf: Arc<Mutex<VecDeque<u8>>> = Default::default();
+
+        let rb = HeapRb::<u8>::new(BUFFER_CAPACITY);
+        let (mut prod, cons) = rb.split();
+        let header = write_wav_header(2, 44100, 32);
+        prod.push_slice(&header);
+
         let (tx, rx) = waitx::pair();
-        let sink = StreamingSink::new(AudioFormat::F32, buf.clone(), tx);
+        let sink = StreamingSink::new(AudioFormat::F32, prod, tx);
         let player = Player::new(Default::default(), sess, Box::new(NoOpVolume), {
-            let sink = sink.clone();
             move || Box::new(sink)
         });
-        let header = write_wav_header(2, 44100, 32);
-        buf.lock().extend(header);
 
         player.load(uri, true, 0);
 
-        let pcm_stream = PcmStream::new(buf, rx, player);
+        let pcm_stream = PcmStream::new(cons, rx, player);
 
         // build the MSS from your PcmStream
         let mss = MediaSourceStream::new(Box::new(pcm_stream), Default::default());
@@ -177,5 +162,19 @@ impl Spotify {
             None,
         );
         Ok(input)
+    }
+
+    async fn parse_track(&self, track: &FullTrack) -> Result<Song> {
+        let cover_url = if let Some(id) = track.album.id.as_ref() {
+            self.get_cover_url(id.clone()).await.ok()
+        } else {
+            None
+        };
+        let song = Song::from_spotify(track, cover_url).await?;
+        self.song_cache
+            .lock()
+            .await
+            .insert(song.id.clone(), song.clone());
+        Ok(song)
     }
 }

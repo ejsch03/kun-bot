@@ -105,7 +105,7 @@ pub fn embed(
                     if let Some(artist) = song.artist.as_ref() {
                         s.push_str(&format!("\u{00A0}\u{00A0}◦\u{00A0}\u{00A0}{artist}"));
                     }
-                    let dur = format!(" ・ [{}]", humantime::format_duration(dur));
+                    let dur = format!(" ・ {}", humantime::format_duration(dur));
                     s.push_str(&dur);
                     embed.title(s).url(song.track_url)
                 } else {

@@ -1,5 +1,3 @@
-use waitx::Waker;
-
 use super::prelude::*;
 
 pub fn write_wav_header(num_channels: u16, sample_rate: u32, bits_per_sample: u16) -> Vec<u8> {
@@ -23,22 +21,21 @@ pub fn write_wav_header(num_channels: u16, sample_rate: u32, bits_per_sample: u1
     h
 }
 
-#[derive(Clone)]
 pub struct StreamingSink {
     format: AudioFormat,
-    buf: Arc<Mutex<VecDeque<u8>>>,
+    buf: HeapProd<u8>,
     tx: Waker,
 }
 
 impl StreamingSink {
-    pub fn new(format: AudioFormat, buf: Arc<Mutex<VecDeque<u8>>>, tx: Waker) -> Self {
+    pub fn new(format: AudioFormat, buf: HeapProd<u8>, tx: Waker) -> Self {
         Self { format, buf, tx }
     }
 }
 
 impl Sink for StreamingSink {
     fn write(&mut self, packet: AudioPacket, converter: &mut Converter) -> SinkResult<()> {
-        let bytes = match packet {
+        let bytes: Vec<u8> = match packet {
             AudioPacket::Samples(samples) => match self.format {
                 AudioFormat::F64 => samples.as_bytes().to_vec(),
                 AudioFormat::F32 => converter.f64_to_f32(&samples).as_bytes().to_vec(),
@@ -49,10 +46,17 @@ impl Sink for StreamingSink {
             },
             AudioPacket::Raw(bytes) => bytes,
         };
-        // let n = bytes.len();
-        self.buf.lock().extend(bytes);
+        // until all have been written
+        let mut remaining = bytes.as_slice();
+        while !remaining.is_empty() {
+            let n = self.buf.push_slice(remaining);
+            remaining = &remaining[n..];
+            if !remaining.is_empty() {
+                std::thread::yield_now();
+            }
+        }
         self.tx.signal();
-        // log::debug!("SIGNAL: {}", n);
+        self.tx.signal();
         Ok(())
     }
 }
