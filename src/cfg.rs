@@ -6,7 +6,7 @@ pub struct ArgsConfig {
     #[arg(short, long, default_value_t = String::from("s."))]
     prefix: String,
 
-    #[arg(short, long, default_value_t = String::from("kun-bot"))]
+    #[arg(short, long, default_value_t = env!("CARGO_PKG_NAME").to_string())]
     title: String,
 
     #[arg(short, long, default_value = "whitelist.txt")]

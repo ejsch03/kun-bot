@@ -40,7 +40,7 @@ impl Song {
     pub async fn from_spotify(t: &FullTrack, cover_url: Option<String>) -> Result<Self> {
         let track_id =
             t.id.as_ref()
-                .ok_or_else(|| anyhow!("track doesn't have an ID."))?;
+                .ok_or_else(|| anyhow!("track {:?} doesn't have an ID.", t.name))?;
         let id = track_id.id().to_string();
         let dur = t.duration.to_std()?.as_secs();
         let uri = SpotifyUri::from_uri(&track_id.uri())?;

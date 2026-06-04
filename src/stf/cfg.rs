@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use super::prelude::*;
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -9,7 +7,7 @@ pub struct Credentials {
 }
 
 impl Credentials {
-    pub fn new(config_path: Option<PathBuf>) -> Result<Self> {
+    pub fn new(config_path: Option<std::path::PathBuf>) -> Result<Self> {
         // obtain config path
         let config_path = config_path.map(Ok::<_, anyhow::Error>).unwrap_or_else(|| {
             let mut home = std::env::home_dir()

@@ -38,17 +38,18 @@ pub async fn get_images(title: &str, paths: Vec<PathBuf>) -> Result<Vec<CreateMe
         .ok_or_else(|| anyhow!("The provided path(s) contains no valid images."))
 }
 
-pub enum EmbedMessage {
+pub enum EmbedItem {
+    Track(Box<Song>),
+    Playlist(String),
     Queue(Vec<TrackHandle>),
-    Song(Box<Song>),
 }
 
 pub fn embed(
-    ctx: Context<'_>,
+    ctx: PrefixContext<'_>,
     author: impl AsRef<str>,
-    song: Option<EmbedMessage>,
-    queue_length: Option<usize>,
+    song: Option<EmbedItem>,
     brief: bool,
+    queue_length: Option<usize>,
 ) -> CreateReply {
     let embed = CreateEmbed::new();
 
@@ -59,8 +60,8 @@ pub fn embed(
 
             // this is just bro
             if let Some(url) = song.as_ref().and_then(|s| {
-                if let EmbedMessage::Song(s) = s {
-                    s.cover_url.clone()
+                if let EmbedItem::Track(song) = s {
+                    song.cover_url.clone()
                 } else {
                     None
                 }
@@ -77,16 +78,23 @@ pub fn embed(
     // title
     let embed = if let Some(msg) = song {
         match msg {
-            EmbedMessage::Queue(q) => embed.title(
-                q.into_iter()
+            EmbedItem::Queue(q) => {
+                const MAX_QUEUE_LENGTH: usize = 8;
+
+                let mut tracks_iter = q.iter();
+                let Some(top) = tracks_iter.next() else {
+                    return CreateReply::default()
+                        .embed(embed.description("<empty>."))
+                        .reply(true);
+                };
+                let mut msg = format!("Current: **{}**\n", top.data::<TrackInfo>().title);
+
+                let list_str = tracks_iter
+                    .take(MAX_QUEUE_LENGTH)
                     .enumerate()
                     .map(|(i, t)| {
                         let mut s = String::new();
-                        if i == 0 {
-                            s.push_str("`~`) ");
-                        } else {
-                            s.push_str(&format!("`{i}`) "));
-                        }
+                        s.push_str(&format!("{i}. "));
                         let song = t.data::<TrackInfo>();
                         s.push_str(&song.title);
                         if let Some(artist) = song.artist.as_ref() {
@@ -95,9 +103,17 @@ pub fn embed(
                         s
                     })
                     .collect::<Vec<String>>()
-                    .join("\n"),
-            ),
-            EmbedMessage::Song(song) => {
+                    .join("\n");
+
+                msg.push_str(list_str.as_str());
+
+                if q.len() > MAX_QUEUE_LENGTH {
+                    msg.push_str("\n...");
+                }
+
+                embed.description(msg)
+            }
+            EmbedItem::Track(song) => {
                 if !brief {
                     let dur = Duration::from_secs(song.duration);
 
@@ -107,11 +123,12 @@ pub fn embed(
                     }
                     let dur = format!(" ・ {}", humantime::format_duration(dur));
                     s.push_str(&dur);
-                    embed.title(s).url(song.track_url)
+                    embed.title(s).url(song.track_url.as_str())
                 } else {
                     embed
                 }
             }
+            EmbedItem::Playlist(title) => embed.title(title),
         }
     } else {
         embed
@@ -126,11 +143,11 @@ pub fn embed(
     CreateReply::default().embed(embed).reply(true)
 }
 
-pub fn note(ctx: Context<'_>, song: Option<EmbedMessage>, msg: &str) -> CreateReply {
-    embed(ctx, msg, song, None, true)
+pub fn note(ctx: PrefixContext<'_>, song: Option<EmbedItem>, msg: &str) -> CreateReply {
+    embed(ctx, msg, song, true, None)
 }
 
-pub async fn get_loc(ctx: Context<'_>) -> Result<(GuildId, ChannelId)> {
+pub async fn get_loc(ctx: PrefixContext<'_>) -> Result<(GuildId, ChannelId)> {
     let guild = ctx.guild().ok_or_else(|| anyhow!("not from a guild."))?;
     let channel_id = guild
         .voice_states
@@ -140,7 +157,7 @@ pub async fn get_loc(ctx: Context<'_>) -> Result<(GuildId, ChannelId)> {
     Ok((guild.id, channel_id))
 }
 
-pub async fn get_call(ctx: Context<'_>) -> Result<Arc<Mutex<Call>>> {
+pub async fn get_call(ctx: PrefixContext<'_>) -> Result<Arc<Mutex<Call>>> {
     let (guild_id, ..) = get_loc(ctx).await?;
     let manager = songbird::get(ctx.serenity_context())
         .await
@@ -150,13 +167,17 @@ pub async fn get_call(ctx: Context<'_>) -> Result<Arc<Mutex<Call>>> {
         .ok_or_else(|| anyhow!("not in a voice channel"))
 }
 
-pub async fn join_helper(ctx: Context<'_>) -> Result<Arc<Mutex<Call>>> {
+pub async fn join_helper(ctx: PrefixContext<'_>) -> Result<Arc<Mutex<Call>>> {
+    tracing::debug!("attempting to join channel");
     let (guild_id, channel_id) = get_loc(ctx).await?;
     if let Ok(call) = get_call(ctx).await
         && let Some(joined) = { call.lock().await.current_channel() }
         && channel_id.get() == joined.0.get()
     {
-        call.lock().await.deafen(true).await?;
+        // redeafen if not already deafened
+        if !call.lock().await.is_deaf() {
+            call.lock().await.deafen(true).await?;
+        }
         return Ok(call);
     }
     let manager = songbird::get(ctx.serenity_context())
@@ -164,10 +185,13 @@ pub async fn join_helper(ctx: Context<'_>) -> Result<Arc<Mutex<Call>>> {
         .ok_or_else(|| anyhow!("songbird not registered"))?;
     let call = manager.join(guild_id, channel_id).await?;
     call.lock().await.deafen(true).await?;
+
+    tracing::debug!("joined voice channel");
+
     Ok(call)
 }
 
-pub async fn play_helper(ctx: Context<'_>, query: Vec<String>, is_next: bool) -> Result<()> {
+pub async fn play_helper(ctx: PrefixContext<'_>, query: Vec<String>, is_next: bool) -> Result<()> {
     ctx.channel_id().broadcast_typing(ctx.http()).await?;
     _whitelist(ctx)?;
 
@@ -177,25 +201,77 @@ pub async fn play_helper(ctx: Context<'_>, query: Vec<String>, is_next: bool) ->
         .collect::<Vec<String>>()
         .join(" ");
 
-    let song = ctx.data.stf.search(&query).await?;
-    let input = ctx.data().stf.stream(song.uri.clone()).await?;
-    let len = {
-        let track = Track::new_with_data(input, Arc::new(TrackInfo::new(song.clone())));
-        let call = join_helper(ctx).await?;
-        let mut call = call.lock().await;
-        let new_len = call.queue().len() + 1;
-        let _handle = call.enqueue(track).await; // TODO - now playing event
-        if is_next {
-            call.queue().modify_queue(|q| {
-                if q.len() > 1
-                    && let Some(last) = q.pop_back()
-                {
-                    q.insert(1, last);
-                }
-            });
+    tracing::debug!("searching for song");
+    let search_results = ctx.data.stf.search(&query).await?;
+
+    let call = join_helper(ctx).await?;
+    let mut call = call.lock().await;
+
+    // process the search results
+    let item = match search_results {
+        FullSearchResult::Track(song) => {
+            tracing::debug!("found song {:?}", song.title);
+
+            // eager load for single tracks
+            let input = ctx.data().stf.stream(song.uri.clone()).await?;
+
+            let track = Track::new_with_data(input, Arc::new(TrackInfo::new(*song.clone())));
+            let _handle = call.enqueue(track).await;
+
+            if is_next {
+                call.queue().modify_queue(|q| {
+                    if q.len() > 1
+                        && let Some(last) = q.pop_back()
+                    {
+                        q.insert(1, last);
+                    }
+                });
+            }
+            EmbedItem::Track(song)
         }
-        new_len
+        FullSearchResult::Playlist { title, songs } => {
+            let n = songs.len();
+            tracing::debug!("found {n} songs in playlist {title:?}");
+
+            let tracks: Vec<_> = songs
+                .into_iter()
+                .map(|song| {
+                    let input = Input::Lazy(Box::new(ctx.data.stf.source(song.uri.clone())));
+                    Track::new_with_data(input, Arc::new(TrackInfo::new(song)))
+                })
+                .collect();
+
+            if is_next {
+                // enqueue all tracks to the back first
+                for track in tracks {
+                    call.enqueue(track).await;
+                }
+                // then rotate them to the front
+                call.queue().modify_queue(|q| {
+                    if q.len() > 1 {
+                        let current: Vec<_> = q.drain(..1).collect();
+                        let playlist: Vec<_> = q.drain(q.len() - n..).collect();
+                        let rest: Vec<_> = q.drain(..).collect();
+                        q.extend(current);
+                        q.extend(playlist);
+                        q.extend(rest);
+                    }
+                });
+            } else {
+                for track in tracks {
+                    call.enqueue(track).await;
+                }
+            }
+
+            EmbedItem::Playlist(title)
+        }
     };
+
+    // determine the new queue length
+    let len = call.queue().len();
+    drop(call);
+
+    // finish the embed, then send it
     ctx.send(embed(
         ctx,
         if is_next {
@@ -203,17 +279,16 @@ pub async fn play_helper(ctx: Context<'_>, query: Vec<String>, is_next: bool) ->
         } else {
             "Added to Queue."
         },
-        Some(EmbedMessage::Song(Box::new(song))),
-        Some(len),
+        Some(item),
         false,
+        Some(len),
     ))
     .await?;
-
     Ok(())
 }
 
 // TODO - this is temp
-pub fn _whitelist(ctx: Context<'_>) -> Result<()> {
+pub fn _whitelist(ctx: PrefixContext<'_>) -> Result<()> {
     if [
         GuildId::new(684429201398562855),
         GuildId::new(1090358332440711209),

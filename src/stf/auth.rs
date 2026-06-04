@@ -1,5 +1,3 @@
-use librespot::core::cache::Cache;
-
 use super::prelude::*;
 
 pub async fn get_creds() -> Result<LSpotCreds> {
@@ -20,9 +18,18 @@ pub async fn get_creds() -> Result<LSpotCreds> {
     Ok(creds)
 }
 
-pub async fn create_session() -> Result<Session> {
+pub async fn create_session(cache: Cache, creds: LSpotCreds) -> Result<Session> {
+    // connect to Spotify session
+    tracing::info!("Connecting librespot session...");
+    let sess = Session::new(Default::default(), Some(cache.clone()));
+    sess.connect(creds.clone(), true).await?;
+    tracing::info!("Successfully connected librespot session.");
+    Ok(sess)
+}
+
+pub async fn authenticate() -> Result<(Cache, LSpotCreds, Session)> {
     // credentials cache
-    let cache = Cache::new(Some("."), None, None, None)?;
+    let cache = librespot::core::cache::Cache::new(Some("."), None, None, None)?;
 
     // obtain credentials
     let creds = if let Some(creds) = cache.credentials() {
@@ -31,10 +38,7 @@ pub async fn create_session() -> Result<Session> {
         get_creds().await?
     };
 
-    // connect to Spotify session
-    log::trace!("Connecting...");
-    let session = Session::new(Default::default(), Some(cache));
-    session.connect(creds, true).await?;
+    let sess = create_session(cache.clone(), creds.clone()).await?;
 
-    Ok(session)
+    Ok((cache, creds, sess))
 }

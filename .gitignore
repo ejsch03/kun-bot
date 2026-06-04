@@ -1,4 +1,6 @@
 /target
+/logs
 *.txt
 *.json
 *.png
+start.sh

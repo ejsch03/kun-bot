@@ -1,7 +1,7 @@
 use crate::prelude::*;
 
 #[poise::command(prefix_command)]
-pub async fn a(ctx: Context<'_>) -> Result<()> {
+pub async fn a(ctx: PrefixContext<'_>) -> Result<()> {
     let msg = ctx.msg;
     let args = ctx.args;
 
@@ -22,7 +22,7 @@ pub async fn a(ctx: Context<'_>) -> Result<()> {
 }
 
 #[poise::command(prefix_command)]
-pub async fn w(ctx: Context<'_>) -> Result<()> {
+pub async fn w(ctx: PrefixContext<'_>) -> Result<()> {
     let msg = ctx.msg;
     let args = ctx.args;
 
@@ -52,14 +52,14 @@ pub async fn w(ctx: Context<'_>) -> Result<()> {
 }
 
 #[poise::command(prefix_command, guild_only, aliases("j", "hop-in"))]
-pub async fn join(ctx: Context<'_>) -> Result<()> {
+pub async fn join(ctx: PrefixContext<'_>) -> Result<()> {
     _whitelist(ctx)?;
     join_helper(ctx).await?;
     Ok(())
 }
 
 #[poise::command(prefix_command, guild_only, aliases("quit", "dip"))]
-pub async fn leave(ctx: Context<'_>) -> Result<()> {
+pub async fn leave(ctx: PrefixContext<'_>) -> Result<()> {
     {
         let call = get_call(ctx).await?;
         call.lock().await.queue().stop();
@@ -73,17 +73,17 @@ pub async fn leave(ctx: Context<'_>) -> Result<()> {
 }
 
 #[poise::command(prefix_command, guild_only, aliases("piss"))]
-pub async fn play(ctx: Context<'_>, query: Vec<String>) -> Result<()> {
+pub async fn play(ctx: PrefixContext<'_>, query: Vec<String>) -> Result<()> {
     play_helper(ctx, query, false).await
 }
 
 #[poise::command(prefix_command, guild_only, aliases("playtop"))]
-pub async fn playnext(ctx: Context<'_>, query: Vec<String>) -> Result<()> {
+pub async fn playnext(ctx: PrefixContext<'_>, query: Vec<String>) -> Result<()> {
     play_helper(ctx, query, true).await
 }
 
-#[poise::command(prefix_command, guild_only, aliases("nah"))]
-pub async fn skip(ctx: Context<'_>) -> Result<()> {
+#[poise::command(prefix_command, guild_only, aliases("next", "nah"))]
+pub async fn skip(ctx: PrefixContext<'_>) -> Result<()> {
     let call = get_call(ctx).await?;
     let call = call.lock().await;
     let queue = call.queue();
@@ -95,9 +95,9 @@ pub async fn skip(ctx: Context<'_>) -> Result<()> {
         ctx.send(embed(
             ctx,
             format!("Skipped: {}", song.title),
-            Some(EmbedMessage::Song(Box::new(song))),
-            Some(new_len),
+            Some(EmbedItem::Track(Box::new(song))),
             true,
+            Some(new_len),
         ))
         .await?;
     } else {
@@ -107,7 +107,7 @@ pub async fn skip(ctx: Context<'_>) -> Result<()> {
 }
 
 #[poise::command(prefix_command, guild_only, aliases("stop"))]
-pub async fn pause(ctx: Context<'_>) -> Result<()> {
+pub async fn pause(ctx: PrefixContext<'_>) -> Result<()> {
     let call = get_call(ctx).await?;
     let call = call.lock().await;
     let queue = call.queue();
@@ -122,7 +122,7 @@ pub async fn pause(ctx: Context<'_>) -> Result<()> {
 }
 
 #[poise::command(prefix_command, guild_only, aliases("continue"))]
-pub async fn resume(ctx: Context<'_>) -> Result<()> {
+pub async fn resume(ctx: PrefixContext<'_>) -> Result<()> {
     let call = get_call(ctx).await?;
     let call = call.lock().await;
     let queue = call.queue();
@@ -137,7 +137,7 @@ pub async fn resume(ctx: Context<'_>) -> Result<()> {
 }
 
 #[poise::command(prefix_command, guild_only, aliases("clean"))]
-pub async fn clear(ctx: Context<'_>) -> Result<()> {
+pub async fn clear(ctx: PrefixContext<'_>) -> Result<()> {
     let call = get_call(ctx).await?;
     let call = call.lock().await;
     let queue = call.queue();
@@ -168,7 +168,7 @@ pub async fn clear(ctx: Context<'_>) -> Result<()> {
 }
 
 #[poise::command(prefix_command, guild_only, aliases("q"))]
-pub async fn queue(ctx: Context<'_>) -> Result<()> {
+pub async fn queue(ctx: PrefixContext<'_>) -> Result<()> {
     let call = get_call(ctx).await?;
     let call = call.lock().await;
     let queue = call.queue();
@@ -176,9 +176,9 @@ pub async fn queue(ctx: Context<'_>) -> Result<()> {
     ctx.send(embed(
         ctx,
         "The Queue.",
-        Some(EmbedMessage::Queue(queue.current_queue())),
-        Some(queue.len()),
+        Some(EmbedItem::Queue(queue.current_queue())),
         true,
+        Some(queue.len()),
     ))
     .await?;
 
@@ -187,7 +187,7 @@ pub async fn queue(ctx: Context<'_>) -> Result<()> {
 
 // wow just wow
 #[poise::command(prefix_command, guild_only, aliases("rm"))]
-pub async fn remove(ctx: Context<'_>, track_index: Option<usize>) -> Result<()> {
+pub async fn remove(ctx: PrefixContext<'_>, track_index: Option<usize>) -> Result<()> {
     let call = get_call(ctx).await?;
     let call = call.lock().await;
     let queue = call.queue();
@@ -201,15 +201,15 @@ pub async fn remove(ctx: Context<'_>, track_index: Option<usize>) -> Result<()> 
                 ctx.send(embed(
                     ctx,
                     format!("Skipped: {}", song.title),
-                    Some(EmbedMessage::Song(Box::new(song))),
-                    Some(new_len),
+                    Some(EmbedItem::Track(Box::new(song))),
                     true,
+                    Some(new_len),
                 ))
                 .await?;
             } else if let Some(t) = queue.dequeue(index) {
                 let song = t.data::<TrackInfo>().as_ref().clone().into_inner();
                 let msg = format!("Removed: {}", song.title);
-                ctx.send(note(ctx, Some(EmbedMessage::Song(Box::new(song))), &msg))
+                ctx.send(note(ctx, Some(EmbedItem::Track(Box::new(song))), &msg))
                     .await?;
             } else {
                 bail!("No track at that position.")
@@ -220,5 +220,22 @@ pub async fn remove(ctx: Context<'_>, track_index: Option<usize>) -> Result<()> 
     } else {
         bail!("Please provide the track position.")
     }
+    Ok(())
+}
+
+#[poise::command(prefix_command, guild_only, aliases("mix"))]
+pub async fn shuffle(ctx: PrefixContext<'_>) -> Result<()> {
+    let call = get_call(ctx).await?;
+    let call = call.lock().await;
+    let queue = call.queue();
+
+    // randomly shuffle the queue
+    queue.modify_queue(|q| {
+        if q.len() > 1 {
+            q.make_contiguous()[1..].shuffle(&mut rand::rng());
+        }
+    });
+
+    ctx.say("Queue shuffled.").await?;
     Ok(())
 }

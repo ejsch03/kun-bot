@@ -1,27 +1,101 @@
 use super::prelude::*;
 
-struct LibreSpotify {
-    sess: Mutex<Session>,
+#[derive(Clone, Copy, Debug)]
+pub enum SpotifyUriType {
+    Track,
+    Playlist,
+}
+
+#[derive(Debug)]
+pub enum FullSearchResult {
+    Track(Box<Song>),
+    Playlist { title: String, songs: Vec<Song> },
+}
+
+#[derive(Clone)]
+pub struct LibreSpotify {
+    cache: Cache,
+    creds: LibreCreds,
+    sess: Arc<Mutex<Session>>,
 }
 
 impl LibreSpotify {
+    pub async fn new() -> Result<Self> {
+        let (cache, creds, sess) = authenticate().await?;
+
+        Ok(Self {
+            cache,
+            creds,
+            sess: Arc::new(Mutex::new(sess)),
+        })
+    }
+
     pub async fn session(&self) -> Result<Session> {
         let mut sess = self.sess.lock().await;
         if sess.is_invalid() {
-            *sess = Self::create_session().await?;
+            *sess = create_session(self.cache.clone(), self.creds.clone()).await?;
         }
         Ok(sess.clone())
     }
 
-    async fn create_session() -> Result<Session> {
-        let creds = Cache::new(Some("."), None, None, None)?
-            .credentials()
-            .ok_or(anyhow!("No cached credentials"))?;
+    pub async fn source(&self, uri: SpotifyUri) -> Result<AudioStream<Box<dyn MediaSource>>> {
+        let sess = self.session().await?;
 
-        let session_config = SessionConfig::default();
-        let session = Session::new(session_config, None);
-        session.connect(creds, true).await?;
-        Ok(session)
+        let rb = HeapRb::<u8>::new(BUFFER_CAPACITY);
+        let (mut prod, cons) = rb.split();
+
+        // write WAV header for F32 stereo at 44100hz
+        let header = write_wav_header(2, 44100, 32);
+        prod.push_slice(&header);
+
+        let (tx_a, rx_a) = waitx::pair();
+        let (tx_b, rx_b) = waitx::pair();
+        let sink = StreamingSink::new(AudioFormat::F32, prod, tx_a, rx_b);
+        let player = Player::new(Default::default(), sess, Box::new(NoOpVolume), move || {
+            Box::new(sink)
+        });
+
+        player.load(uri, true, 0);
+
+        let pcm_stream = PcmStream::new(cons, tx_b, rx_a, player);
+
+        Ok(AudioStream {
+            input: Box::new(pcm_stream),
+        })
+    }
+
+    pub async fn stream(&self, uri: SpotifyUri) -> Result<Input> {
+        let source = self.source(uri).await?;
+        let mss = MediaSourceStream::new(source.input, Default::default());
+
+        let mut hint = Hint::new();
+        hint.with_extension("wav");
+
+        let probed = get_probe().format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )?;
+
+        let format = probed.format;
+        let meta = probed.metadata;
+        let track = format
+            .default_track()
+            .ok_or_else(|| anyhow!("no available track"))?;
+        let track_id = track.id;
+        let decoder = get_codec_registry().make(&track.codec_params, &DecoderOptions::default())?;
+
+        Ok(Input::Live(
+            LiveInput::Parsed(Parsed {
+                format,
+                decoder,
+                track_id,
+                meta,
+                supports_backseek: false,
+            }),
+            None,
+        ))
     }
 }
 
@@ -38,17 +112,21 @@ impl Spotify {
         let rspot = RSpotify::new(rspot_cred);
         rspot.request_token().await?;
 
-        let sess = Mutex::new(super::auth::create_session().await?);
-
-        let lspot = LibreSpotify { sess };
-
         let app_state = Self {
             rspot,
-            lspot,
+            lspot: LibreSpotify::new().await?,
             song_cache: Default::default(),
             cover_cache: Default::default(),
         };
         Ok(app_state)
+    }
+
+    pub fn source(&self, uri: SpotifyUri) -> Source {
+        Source::new(self.lspot.clone(), uri)
+    }
+
+    pub async fn stream(&self, uri: SpotifyUri) -> Result<Input> {
+        self.lspot.stream(uri).await
     }
 
     pub async fn get_cover_url(&self, id: AlbumId<'static>) -> Result<String> {
@@ -73,27 +151,63 @@ impl Spotify {
         Ok(url)
     }
 
-    pub async fn search(&self, query: &str) -> Result<Song> {
+    pub async fn search(&self, query: &str) -> Result<FullSearchResult> {
         // url
-        if let Some((.., path)) = query.split_once(SPOTIFY_TRACK_URL) {
+        if let Some((.., query)) = query.split_once(SPOTIFY_URL) {
+            let (ty_str, path) = query
+                .split_once('/')
+                .ok_or_else(|| anyhow!("invalid spotify url"))?;
+
+            let ty = match ty_str {
+                "track" => SpotifyUriType::Track,
+                "playlist" => SpotifyUriType::Playlist,
+                _ => anyhow::bail!("unsupported spotify uri type"),
+            };
+
             let s = if let Some((uri_s, ..)) = path.split_once("?") {
                 uri_s
             } else {
                 path
             };
-            let uri = SpotifyId::from_base62(s).map(|id| SpotifyUri::Track { id }.to_string())?;
-            let id = TrackId::from_uri(&uri)?;
-            let track = self.rspot.track(id, None).await?;
-            return self.parse_track(&track).await;
-        }
 
-        // id
-        if let Ok(uri) =
-            SpotifyId::from_base62(query).map(|id| SpotifyUri::Track { id }.to_string())
-        {
-            let id = TrackId::from_uri(&uri)?;
-            let track = self.rspot.track(id, None).await?;
-            return self.parse_track(&track).await;
+            let id = SpotifyId::from_base62(s)?;
+
+            return match ty {
+                SpotifyUriType::Track => {
+                    let uri = SpotifyUri::Track { id }.to_string();
+                    let track_id = TrackId::from_uri(uri.as_str())?;
+                    let track = self.rspot.track(track_id, None).await?;
+                    let song = self.parse_track(&track).await?;
+                    Ok(FullSearchResult::Track(Box::new(song)))
+                }
+                SpotifyUriType::Playlist => {
+                    let uri = SpotifyUri::Playlist { user: None, id }.to_string();
+                    let playlist_id = PlaylistId::from_uri(uri.as_str())?;
+                    let playlist = self.rspot.playlist(playlist_id, None, None).await?;
+                    let tracks = playlist
+                        .items
+                        .items
+                        .into_iter()
+                        .filter_map(|i| {
+                            if let Some(PlayableItem::Track(t)) = i.item {
+                                Some(t)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<FullTrack>>();
+
+                    // parse every track
+                    let results =
+                        futures::future::join_all(tracks.iter().map(|t| self.parse_track(t))).await;
+                    let songs = results.into_iter().filter_map(|r| r.ok()).collect();
+
+                    Ok(FullSearchResult::Playlist {
+                        title: playlist.name,
+                        songs,
+                    })
+                }
+            };
         }
 
         // search term
@@ -107,61 +221,11 @@ impl Spotify {
                 .items
                 .first()
                 .ok_or_else(|| anyhow!("failed to find song."))?;
-            self.parse_track(track).await
+            let song = self.parse_track(track).await?;
+            Ok(FullSearchResult::Track(Box::new(song)))
         } else {
             bail!("no available song(s)")
         }
-    }
-
-    pub async fn stream(&self, uri: SpotifyUri) -> Result<Input> {
-        let sess = self.lspot.session().await?;
-
-        let rb = HeapRb::<u8>::new(BUFFER_CAPACITY);
-        let (mut prod, cons) = rb.split();
-        let header = write_wav_header(2, 44100, 32);
-        prod.push_slice(&header);
-
-        let (tx, rx) = waitx::pair();
-        let sink = StreamingSink::new(AudioFormat::F32, prod, tx);
-        let player = Player::new(Default::default(), sess, Box::new(NoOpVolume), {
-            move || Box::new(sink)
-        });
-
-        player.load(uri, true, 0);
-
-        let pcm_stream = PcmStream::new(cons, rx, player);
-
-        // build the MSS from your PcmStream
-        let mss = MediaSourceStream::new(Box::new(pcm_stream), Default::default());
-
-        let mut hint = Hint::new();
-        hint.with_extension("wav");
-
-        let probed = symphonia::default::get_probe().format(
-            &hint,
-            mss, // only used here
-            &FormatOptions::default(),
-            &symphonia::core::meta::MetadataOptions::default(),
-        )?;
-
-        let format = probed.format;
-        let meta = probed.metadata;
-        let track = format.default_track().ok_or_else(|| anyhow!("no track"))?;
-        let track_id = track.id;
-        let decoder = symphonia::default::get_codecs()
-            .make(&track.codec_params, &DecoderOptions::default())?;
-
-        let input = Input::Live(
-            LiveInput::Parsed(Parsed {
-                format,
-                decoder,
-                track_id,
-                meta,
-                supports_backseek: false,
-            }),
-            None,
-        );
-        Ok(input)
     }
 
     async fn parse_track(&self, track: &FullTrack) -> Result<Song> {

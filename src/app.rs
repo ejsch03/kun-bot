@@ -1,8 +1,16 @@
-use songbird::SerenityInit;
-
 use crate::prelude::*;
 
-pub async fn run(data: Data, token: &str) -> Result<()> {
+pub async fn run() -> Result<()> {
+    // init crypto provider
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .map_err(|_| anyhow!("failed to install rustls crypto provider"))?;
+
+    // init data
+    let data = Data::new().await?;
+    let token =
+        std::env::var("KUN_BOT_TOKEN").context("KUN_BOT_TOKEN environment variable not set")?;
+
     let intents = GatewayIntents::MESSAGE_CONTENT
         | GatewayIntents::GUILD_MESSAGES
         | GatewayIntents::GUILD_VOICE_STATES
@@ -18,6 +26,7 @@ pub async fn run(data: Data, token: &str) -> Result<()> {
                 prefix: Some(data.prefix.clone()),
                 ..Default::default()
             },
+            on_error: |e| Box::pin(on_error(e)),
             commands: vec![
                 a(),
                 w(),
@@ -31,6 +40,7 @@ pub async fn run(data: Data, token: &str) -> Result<()> {
                 clear(),
                 queue(),
                 remove(),
+                shuffle(),
             ],
             ..Default::default()
         })
@@ -43,12 +53,16 @@ pub async fn run(data: Data, token: &str) -> Result<()> {
         .build();
 
     // instantiate client
-    let mut client = serenity::Client::builder(token, intents)
-        .framework(framework)
-        .event_handler(Handler)
-        .register_songbird()
-        .await?;
+    let mut client = songbird::SerenityInit::register_songbird(
+        serenity::Client::builder(token, intents)
+            .framework(framework)
+            .event_handler(Handler),
+    )
+    .await?;
+
     client.data.write().await.insert::<MessageLink>(links);
+
+    tracing::info!("Bot is running!");
 
     // run the client
     client.start().await.map_err(Into::into)
