@@ -20,7 +20,7 @@ pub async fn delete_if_linked(
     ctx.http.delete_message(channel_id, link_id, None).await?;
     {
         //  remove the message from links if it was able to be deleted
-        let data = ctx.data.write().await;
+        let data = ctx.data.read().await;
         let mut links = data
             .get::<MessageLink>()
             .ok_or_else(|| anyhow!("Message link map hasn't been instantiated."))?

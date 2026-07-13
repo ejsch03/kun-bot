@@ -48,54 +48,50 @@ impl LibreSpotify {
         let header = write_wav_header(2, 44100, 32);
         prod.push_slice(&header);
 
-        let (tx_a, rx_a) = waitx::pair();
-        let (tx_b, rx_b) = waitx::pair();
-        let sink = StreamingSink::new(AudioFormat::F32, prod, tx_a, rx_b);
+        let (data_tx, data_rx) = waitx::pair();
+        let (space_tx, space_rx) = waitx::pair();
+        let status = Arc::new(StreamStatus::default());
+
+        let sink = StreamingSink::new(
+            AudioFormat::F32,
+            prod,
+            data_tx.clone(),
+            space_rx,
+            status.clone(),
+        );
         let player = Player::new(Default::default(), sess, Box::new(NoOpVolume), move || {
             Box::new(sink)
         });
 
+        // watch for the track finishing (or failing): librespot never calls
+        // `Sink::stop` at a natural end-of-track, so without this the reader
+        // would block forever and the songbird queue would never advance
+        let mut events = player.get_player_event_channel();
+        {
+            let status = status.clone();
+            tokio::spawn(async move {
+                while let Some(event) = events.recv().await {
+                    match event {
+                        PlayerEvent::EndOfTrack { .. }
+                        | PlayerEvent::Stopped { .. }
+                        | PlayerEvent::Unavailable { .. }
+                        | PlayerEvent::SessionDisconnected { .. } => break,
+                        _ => {}
+                    }
+                }
+                // also reached if the channel closes (player dropped)
+                status.finish();
+                data_tx.signal();
+            });
+        }
+
         player.load(uri, true, 0);
 
-        let pcm_stream = PcmStream::new(cons, tx_b, rx_a, player);
+        let pcm_stream = PcmStream::new(cons, space_tx, data_rx, status, player);
 
         Ok(AudioStream {
             input: Box::new(pcm_stream),
         })
-    }
-
-    pub async fn stream(&self, uri: SpotifyUri) -> Result<Input> {
-        let source = self.source(uri).await?;
-        let mss = MediaSourceStream::new(source.input, Default::default());
-
-        let mut hint = Hint::new();
-        hint.with_extension("wav");
-
-        let probed = get_probe().format(
-            &hint,
-            mss,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
-        )?;
-
-        let format = probed.format;
-        let meta = probed.metadata;
-        let track = format
-            .default_track()
-            .ok_or_else(|| anyhow!("no available track"))?;
-        let track_id = track.id;
-        let decoder = get_codec_registry().make(&track.codec_params, &DecoderOptions::default())?;
-
-        Ok(Input::Live(
-            LiveInput::Parsed(Parsed {
-                format,
-                decoder,
-                track_id,
-                meta,
-                supports_backseek: false,
-            }),
-            None,
-        ))
     }
 }
 
@@ -123,10 +119,6 @@ impl Spotify {
 
     pub fn source(&self, uri: SpotifyUri) -> Source {
         Source::new(self.lspot.clone(), uri)
-    }
-
-    pub async fn stream(&self, uri: SpotifyUri) -> Result<Input> {
-        self.lspot.stream(uri).await
     }
 
     pub async fn get_cover_url(&self, id: AlbumId<'static>) -> Result<String> {

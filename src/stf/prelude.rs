@@ -2,6 +2,7 @@
 pub use std::collections::HashMap;
 pub use std::io::{self, Read, Seek};
 pub use std::sync::Arc;
+pub use std::sync::atomic::{AtomicBool, Ordering};
 
 // error-handling
 pub use crate::prelude::{Result, anyhow, bail};
@@ -16,7 +17,7 @@ pub use librespot::playback::{
     convert::Converter,
     decoder::AudioPacket,
     mixer::NoOpVolume,
-    player::Player,
+    player::{Player, PlayerEvent},
 };
 
 // rspotify
@@ -27,15 +28,8 @@ pub use rspotify::model::{
 pub use rspotify::prelude::BaseClient;
 
 // songbird
-pub use songbird::input::codecs::{get_codec_registry, get_probe};
-pub use songbird::input::core::{
-    codecs::DecoderOptions,
-    formats::FormatOptions,
-    io::{MediaSource, MediaSourceStream},
-    meta::MetadataOptions,
-    probe::Hint,
-};
-pub use songbird::input::{AudioStream, AudioStreamError, Compose, Input, LiveInput, Parsed};
+pub use songbird::input::core::io::MediaSource;
+pub use songbird::input::{AudioStream, AudioStreamError, Compose};
 
 // misc
 pub use ringbuf::traits::{Producer, Split};

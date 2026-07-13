@@ -24,23 +24,35 @@ pub fn write_wav_header(num_channels: u16, sample_rate: u32, bits_per_sample: u1
 pub struct StreamingSink {
     format: AudioFormat,
     buf: HeapProd<u8>,
-    tx: Waker,
-    rx: Waiter,
+    tx: Waker,  // signals available data to the reader
+    rx: Waiter, // waits for free buffer space
+    status: Arc<StreamStatus>,
 }
 
 impl StreamingSink {
-    pub fn new(format: AudioFormat, buf: HeapProd<u8>, tx: Waker, rx: Waiter) -> Self {
+    pub fn new(
+        format: AudioFormat,
+        buf: HeapProd<u8>,
+        tx: Waker,
+        rx: Waiter,
+        status: Arc<StreamStatus>,
+    ) -> Self {
         Self {
             format,
             buf,
             tx,
             rx,
+            status,
         }
     }
 }
 
 impl Sink for StreamingSink {
     fn write(&mut self, packet: AudioPacket, converter: &mut Converter) -> SinkResult<()> {
+        if self.status.is_closed() {
+            return Ok(());
+        }
+
         let bytes: Vec<u8> = match packet {
             AudioPacket::Samples(samples) => match self.format {
                 AudioFormat::F64 => samples.as_bytes().to_vec(),
@@ -60,6 +72,10 @@ impl Sink for StreamingSink {
             remaining = &remaining[n..];
             if !remaining.is_empty() {
                 self.rx.wait();
+                if self.status.is_closed() {
+                    // the reader is gone; discard the rest
+                    return Ok(());
+                }
             }
         }
 

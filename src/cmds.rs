@@ -155,12 +155,11 @@ pub async fn clear(ctx: PrefixContext<'_>) -> Result<()> {
     {
         is_playing = true
     }
-    // clear the queue
+    // clear the queue, stopping removed tracks so they don't leak in the driver
     queue.modify_queue(|q| {
-        if is_playing {
-            q.drain(1..);
-        } else {
-            q.clear();
+        let kept = usize::from(is_playing);
+        for track in q.drain(kept..) {
+            let _ = track.stop();
         }
     });
     ctx.send(note(ctx, None, "Queue has been cleared.")).await?;
@@ -207,6 +206,7 @@ pub async fn remove(ctx: PrefixContext<'_>, track_index: Option<usize>) -> Resul
                 ))
                 .await?;
             } else if let Some(t) = queue.dequeue(index) {
+                t.stop()?;
                 let song = t.data::<TrackInfo>().as_ref().clone().into_inner();
                 let msg = format!("Removed: {}", song.title);
                 ctx.send(note(ctx, Some(EmbedItem::Track(Box::new(song))), &msg))

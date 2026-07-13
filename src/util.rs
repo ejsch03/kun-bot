@@ -13,7 +13,6 @@ pub async fn get_images(title: &str, paths: Vec<PathBuf>) -> Result<Vec<CreateMe
     let mut images = Vec::new();
 
     for (p, file_name) in paths
-        .clone()
         .into_iter()
         .filter_map(|p| Some(read_dir(p).ok()?.filter_map(Result::ok)))
         .flatten()
@@ -94,7 +93,8 @@ pub fn embed(
                     .enumerate()
                     .map(|(i, t)| {
                         let mut s = String::new();
-                        s.push_str(&format!("{i}. "));
+                        // 1-based so the numbers match `remove <position>`
+                        s.push_str(&format!("{}. ", i + 1));
                         let song = t.data::<TrackInfo>();
                         s.push_str(&song.title);
                         if let Some(artist) = song.artist.as_ref() {
@@ -107,7 +107,7 @@ pub fn embed(
 
                 msg.push_str(list_str.as_str());
 
-                if q.len() > MAX_QUEUE_LENGTH {
+                if q.len() > MAX_QUEUE_LENGTH + 1 {
                     msg.push_str("\n...");
                 }
 
@@ -170,15 +170,18 @@ pub async fn get_call(ctx: PrefixContext<'_>) -> Result<Arc<Mutex<Call>>> {
 pub async fn join_helper(ctx: PrefixContext<'_>) -> Result<Arc<Mutex<Call>>> {
     tracing::debug!("attempting to join channel");
     let (guild_id, channel_id) = get_loc(ctx).await?;
-    if let Ok(call) = get_call(ctx).await
-        && let Some(joined) = { call.lock().await.current_channel() }
-        && channel_id.get() == joined.0.get()
-    {
-        // redeafen if not already deafened
-        if !call.lock().await.is_deaf() {
-            call.lock().await.deafen(true).await?;
+    if let Ok(call) = get_call(ctx).await {
+        let mut guard = call.lock().await;
+        if let Some(joined) = guard.current_channel()
+            && channel_id.get() == joined.0.get()
+        {
+            // redeafen if not already deafened
+            if !guard.is_deaf() {
+                guard.deafen(true).await?;
+            }
+            drop(guard);
+            return Ok(call);
         }
-        return Ok(call);
     }
     let manager = songbird::get(ctx.serenity_context())
         .await
@@ -212,55 +215,42 @@ pub async fn play_helper(ctx: PrefixContext<'_>, query: Vec<String>, is_next: bo
         FullSearchResult::Track(song) => {
             tracing::debug!("found song {:?}", song.title);
 
-            // eager load for single tracks
-            let input = ctx.data().stf.stream(song.uri.clone()).await?;
-
+            let input = Input::Lazy(Box::new(ctx.data.stf.source(song.uri.clone())));
             let track = Track::new_with_data(input, Arc::new(TrackInfo::new(*song.clone())));
-            let _handle = call.enqueue(track).await;
+            call.enqueue(track).await;
 
             if is_next {
+                // move the new track just behind the currently playing one
                 call.queue().modify_queue(|q| {
-                    if q.len() > 1
-                        && let Some(last) = q.pop_back()
-                    {
-                        q.insert(1, last);
+                    if q.len() > 2 {
+                        q.make_contiguous()[1..].rotate_right(1);
                     }
                 });
             }
             EmbedItem::Track(song)
         }
         FullSearchResult::Playlist { title, songs } => {
+            if songs.is_empty() {
+                bail!("the playlist contains no playable songs.")
+            }
+
             let n = songs.len();
             tracing::debug!("found {n} songs in playlist {title:?}");
 
-            let tracks: Vec<_> = songs
-                .into_iter()
-                .map(|song| {
-                    let input = Input::Lazy(Box::new(ctx.data.stf.source(song.uri.clone())));
-                    Track::new_with_data(input, Arc::new(TrackInfo::new(song)))
-                })
-                .collect();
+            for song in songs {
+                let input = Input::Lazy(Box::new(ctx.data.stf.source(song.uri.clone())));
+                let track = Track::new_with_data(input, Arc::new(TrackInfo::new(song)));
+                call.enqueue(track).await;
+            }
 
             if is_next {
-                // enqueue all tracks to the back first
-                for track in tracks {
-                    call.enqueue(track).await;
-                }
-                // then rotate them to the front
+                // move the playlist ahead of any previously queued tracks,
+                // keeping the currently playing track at the front
                 call.queue().modify_queue(|q| {
-                    if q.len() > 1 {
-                        let current: Vec<_> = q.drain(..1).collect();
-                        let playlist: Vec<_> = q.drain(q.len() - n..).collect();
-                        let rest: Vec<_> = q.drain(..).collect();
-                        q.extend(current);
-                        q.extend(playlist);
-                        q.extend(rest);
+                    if q.len() > n + 1 {
+                        q.make_contiguous()[1..].rotate_right(n);
                     }
                 });
-            } else {
-                for track in tracks {
-                    call.enqueue(track).await;
-                }
             }
 
             EmbedItem::Playlist(title)

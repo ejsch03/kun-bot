@@ -4,20 +4,20 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1.0.102"
+anyhow = "1.0.103"
 async-stream = "0.3.6"
 async-trait = "0.1.89"
-bytemuck = "1.25.0"
+bytemuck = "1.25.1"
 clap = { version = "4.6.1", features = ["derive"] }
 futures = "0.3.32"
-humantime = "2.3.0"
+humantime = "2.4.0"
 image = "0.25.10"
 librespot = "0.8.0"
 poise = "0.6.2"
-rand = "0.10.1"
+rand = "0.10.2"
 ringbuf = "0.5.0"
 rspotify = "0.16.1"
-rustls = { version = "0.23.40", features = ["ring"] }
+rustls = { version = "0.23.41", features = ["ring"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 serenity = "0.12.5"
@@ -27,7 +27,7 @@ tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 waitx = "0.4.3"
-zerocopy = "0.8.50"
+zerocopy = "0.8.54"
 
 # required for songbird 0.6.0
 symphonia = "=0.5.5"

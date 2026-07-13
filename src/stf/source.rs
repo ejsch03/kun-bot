@@ -14,7 +14,7 @@ impl Source {
 #[async_trait::async_trait]
 impl Compose for Source {
     fn create(&mut self) -> Result<AudioStream<Box<dyn MediaSource>>, AudioStreamError> {
-        unimplemented!() // sync version, not used
+        Err(AudioStreamError::Unsupported) // sync version, not used
     }
 
     async fn create_async(
